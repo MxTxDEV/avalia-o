@@ -819,23 +819,45 @@ async function apiWrite(method, col, id, body) {
       await new Promise(res => setTimeout(res, 700 + Math.random() * 600));
     }
     if (r && r.ok) return true;
+    if (r && r.status === 409) { let j = {}; try { j = await r.json(); } catch (e) {} return { conflito: true, atual: j.atual }; }
     if (r && r.status === 401) { toast('A senha de acesso mudou. Entre de novo.', true); logout(); return false; }
     toast('Não foi possível salvar agora. Verifique a conexão e tente de novo.', true);
     return false;
   } finally { pending--; refreshSync(); }
 }
 
+/* PUT one record. `base` is the version this device loaded; if someone else saved after
+   that, the server answers 409 and the person chooses which version stays. */
+async function apiPut(col, doc, base, force) {
+  const r = await apiWrite('PUT', col, doc.id, { doc, base, force: !!force });
+  if (r && r.conflito) {
+    const quando = r.atual?.atualizadoEm ? new Date(r.atual.atualizadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    const oque = col === 'funcionarios' ? `os dados de ${doc.nome}` : `a avaliação de ${S.funcs.get(doc.funcionarioId)?.nome || 'este funcionário'} (${mesLabel(doc.mes)})`;
+    if (await confirmBox('Alterado em outro dispositivo', `Alguém salvou ${oque}${quando ? ' às ' + quando : ''}, depois que você abriu. Salvar a sua versão por cima da outra?`, 'Salvar a minha', false)) {
+      return apiPut(col, doc, base, true);
+    }
+    if (r.atual) (col === 'funcionarios' ? S.funcs : S.avals).set(doc.id, r.atual);
+    toast('Mantida a versão salva no outro dispositivo.');
+    if (current.view === 'aval') dirty = false;
+    route(true);
+    return false;
+  }
+  return r === true;
+}
+
 const Store = {
-  async saveFunc(f) {
+  async saveFunc(f, opts = {}) {
+    const base = f.atualizadoEm ?? null;
     f.atualizadoEm = new Date().toISOString();
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('funcionarios').doc(f.id).set(f)); if (ok) S.funcs.set(f.id, f); return ok; }
-    if (S.mode === 'api') { const ok = await apiWrite('PUT', 'funcionarios', f.id, f); if (ok) S.funcs.set(f.id, f); return ok; }
+    if (S.mode === 'api') { const ok = await apiPut('funcionarios', f, base, opts.force); if (ok) S.funcs.set(f.id, f); else f.atualizadoEm = base; return ok; }
     S.funcs.set(f.id, f); const ok = lsSave(); refreshSync(); return ok;
   },
-  async saveAval(a) {
+  async saveAval(a, opts = {}) {
+    const base = a.atualizadoEm ?? null;
     a.atualizadoEm = new Date().toISOString(); a.total = totalOf(a);
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('avaliacoes').doc(a.id).set(a)); if (ok) S.avals.set(a.id, a); return ok; }
-    if (S.mode === 'api') { const ok = await apiWrite('PUT', 'avaliacoes', a.id, a); if (ok) S.avals.set(a.id, a); return ok; }
+    if (S.mode === 'api') { const ok = await apiPut('avaliacoes', a, base, opts.force); if (ok) S.avals.set(a.id, a); else a.atualizadoEm = base; return ok; }
     S.avals.set(a.id, a); return lsSave();
   },
   async delAval(id) {
@@ -881,33 +903,40 @@ async function boot() {
 }
 
 /* ---- Vercel API mode ---- */
-let lastSnap = '';
+let lastRev = null;
 async function apiLoad() {
   let r;
-  try { r = await api('GET'); } catch (e) { return 'none'; }
+  try { r = await api('GET', lastRev != null ? '?rev=' + encodeURIComponent(lastRev) : ''); } catch (e) { return 'none'; }
   if (r.status === 401) return 'auth';
   if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) return r.status === 500 ? 'error' : 'none';
   let d; try { d = await r.json(); } catch (e) { return 'none'; }
+  if (d.igual) return 'same';
   if (!Array.isArray(d.funcionarios)) return 'none';
-  const snap = JSON.stringify(d);
-  if (snap !== lastSnap) {
-    lastSnap = snap;
-    S.funcs = new Map(d.funcionarios.map(f => [f.id, f]));
-    S.avals = new Map((d.avaliacoes || []).map(a => [a.id, a]));
-    return 'ok';
-  }
-  return 'same';
+  lastRev = d.rev;
+  S.funcs = new Map(d.funcionarios.map(f => [f.id, f]));
+  S.avals = new Map((d.avaliacoes || []).map(a => [a.id, a]));
+  return 'ok';
 }
 let pollTimer = null;
-function startPolling() {
-  clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    if (document.hidden || pending > 0 || current.view === 'aval') return;
+let polling = false, lastPoll = 0;
+async function pollNow() {
+  if (S.mode !== 'api' || !S.ready || polling || pending > 0 || document.hidden) return;
+  polling = true; lastPoll = Date.now();
+  try {
     const st = await apiLoad();
     if (st === 'ok') onDataChange();
     else if (st === 'auth') logout();
-  }, 30000);
+  } finally { polling = false; }
 }
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(pollNow, 15000);
+}
+// Coming back to the tab, the window or the network refreshes right away.
+const pollSoon = () => pollNow();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSoon(); });
+window.addEventListener('focus', pollSoon);
+window.addEventListener('online', pollSoon);
 function renderLogin(msg) {
   $('.actionbar')?.remove();
   document.body.classList.add('locked');
@@ -927,7 +956,7 @@ function renderLogin(msg) {
     const err = $('#lg-err');
     if (!v) { err.textContent = 'Digite a senha.'; err.hidden = false; return; }
     $('#lg-btn').disabled = true;
-    senha = v; lastSnap = '';
+    senha = v; lastRev = null;
     const st = await apiLoad();
     $('#lg-btn').disabled = false;
     if (st === 'ok' || st === 'same') {
@@ -941,16 +970,26 @@ function renderLogin(msg) {
 function logout() {
   clearInterval(pollTimer);
   try { localStorage.removeItem(SENHA_KEY); } catch (e) {}
-  senha = ''; lastSnap = ''; S.ready = false; S.funcs = new Map(); S.avals = new Map(); dirty = false;
+  senha = ''; lastRev = null; S.ready = false; S.funcs = new Map(); S.avals = new Map(); dirty = false;
   history.replaceState(null, '', location.pathname);
   renderLogin();
 }
 
 /* Re-render on remote changes, but never clobber a form being edited. */
+let avisoConflito = '';
 function onDataChange() {
   if (!S.ready) return;
-  if (current.view === 'aval') return;
+  if (current.view === 'aval') {
+    if (isNew || !A) return;
+    const remoto = S.avals.get(A.id);
+    if (!remoto) return;
+    if ((remoto.atualizadoEm ?? null) === (A.atualizadoEm ?? null)) return;
+    if (!dirty && !$('dialog[open]')) { route(true); toast('Avaliação atualizada com as mudanças de outro dispositivo.'); }
+    else if (avisoConflito !== A.id + remoto.atualizadoEm) { avisoConflito = A.id + remoto.atualizadoEm; toast('Outra pessoa salvou esta avaliação agora. Ao salvar, você escolhe qual versão fica.'); }
+    return;
+  }
   if ($('dialog[open]')) return;
+  if (current.view === 'list' && document.activeElement?.id === 'q') { drawCards(); return; }
   route(true);
 }
 
@@ -1669,9 +1708,11 @@ async function saveAval() {
     const r2 = structuredClone(rival); r2.indicacao = 'nao';
     if (!(await Store.saveAval(r2))) { btn.disabled = false; return; }
   }
-  const ok = await Store.saveAval(structuredClone(A));
+  const copia = structuredClone(A);
+  const ok = await Store.saveAval(copia);
   btn.disabled = false;
   if (!ok) return;
+  A.atualizadoEm = copia.atualizadoEm;
   dirty = false;
   const s = $('#barState'); s.textContent = 'Salva'; s.className = '';
   toast('Avaliação salva');
@@ -1821,8 +1862,8 @@ $('#importFile').addEventListener('change', async (e) => {
   if (!fs.length) { toast('O backup não contém funcionários.', true); return; }
   if (!(await confirmBox('Importar backup?', `Serão importados ${fs.length} funcionário(s) e ${as.length} avaliação(ões). Registros com o mesmo identificador serão substituídos.`, 'Importar', false))) return;
   let ok = true;
-  for (const f of fs) { if (!(await Store.saveFunc({ ...f }))) { ok = false; break; } }
-  if (ok) for (const a of as) { if (!(await Store.saveAval({ ...a }))) { ok = false; break; } }
+  for (const f of fs) { if (!(await Store.saveFunc({ ...f }, { force: true }))) { ok = false; break; } }
+  if (ok) for (const a of as) { if (!(await Store.saveAval({ ...a }, { force: true }))) { ok = false; break; } }
   toast(ok ? 'Backup importado' : 'A importação parou no meio. Tente de novo.', !ok);
   route();
 });

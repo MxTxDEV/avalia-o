@@ -30,8 +30,15 @@ hospedagem estática (por exemplo, GitHub Pages). As bibliotecas de PDF
 
 ## Vercel
 
-`api/data.js` guarda cada registro como um arquivo JSON privado no Vercel Blob
-(`data/funcionarios/<id>.json` e `data/avaliacoes/<id>.json`). O projeto precisa de:
+`api/data.js` guarda todos os dados num único arquivo JSON privado no Vercel Blob
+(`db/state.json`). Assim cada atualização da tela custa uma leitura só, e várias
+pessoas podem usar o app ao mesmo tempo, de aparelhos diferentes:
+
+- a tela se atualiza a cada 15 s enquanto está aberta e na hora em que a pessoa volta para o app;
+- duas gravações ao mesmo tempo não se perdem (a gravação confere a versão do arquivo);
+- se duas pessoas editam o mesmo registro, quem salva por último escolhe qual versão fica.
+
+O projeto precisa de:
 
 - um Blob store **privado** conectado ao projeto (cria a variável `BLOB_READ_WRITE_TOKEN`);
 - a variável `APP_PASSWORD`, com a senha de acesso que a equipe digita ao entrar.
