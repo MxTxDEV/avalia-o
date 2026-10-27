@@ -825,7 +825,7 @@ function drawCards() {
     return `<article class="card">
       <div class="card-top" data-open="${esc(f.id)}" tabindex="0" role="link" aria-label="Abrir ${esc(f.nome)}">
         <div class="avatar"><span>${esc(initials(f.nome))}</span></div>
-        <div class="card-id"><h3>${esc(f.nome)}</h3><div class="role">${esc(f.cargo || 'Cargo não informado')}</div></div>
+        <div class="card-id"><h3>${esc(f.nome)}</h3><div class="role">${esc(f.cargo || 'Cargo não informado')}${f.matricula ? ' · Mat. ' + esc(f.matricula) : ''}</div></div>
       </div>
       <div class="card-contact">
         ${f.setor ? `<div>${I.tag}<span>${esc(f.setor)}</span></div>` : ''}
@@ -849,7 +849,7 @@ function renderFunc(id) {
       <div class="avatar"><span>${esc(initials(f.nome))}</span></div>
       <div style="min-width:0">
         <h1>${esc(f.nome)}</h1>
-        <div class="role">${esc(f.cargo || 'Cargo não informado')}${f.setor ? ' · ' + esc(f.setor) : ''}</div>
+        <div class="role">${esc(f.cargo || 'Cargo não informado')}${f.setor ? ' · ' + esc(f.setor) : ''}${f.matricula ? ' · Matrícula ' + esc(f.matricula) : ''}</div>
         <div class="contacts">
           <div>${I.phone}<span>${esc(f.telefone || '—')}</span></div>
           ${f.email ? `<div>${I.mail}<span>${esc(f.email)}</span></div>` : ''}
@@ -1165,7 +1165,7 @@ function pdfDoc(f, a) {
         <div><span>Nome completo:</span><b>${line(f.nome)}</b></div><div><span>Gestor responsável:</span><b>${line(a.gestor)}</b></div>
         <div><span>Cargo / Função:</span><b>${line(a.cargo)}</b></div><div><span>Mês de referência:</span><b>${esc(mesLabel(a.mes))}</b></div>
         <div><span>Setor:</span><b>${line(a.setor)}</b></div><div><span>Data da avaliação:</span><b>${line(fmtDate(a.dataAvaliacao))}</b></div>
-        <div><span>Contato:</span><b>${line([f.telefone, f.email].filter(Boolean).join(' · '))}</b></div><div></div>
+        <div><span>Contato:</span><b>${line([f.telefone, f.email].filter(Boolean).join(' · '))}</b></div><div><span>Matrícula:</span><b>${line(f.matricula)}</b></div>
       </div></section>
       <section class="pdf-sec">${sh(2, 'Objetivo da avaliação')}<div class="pdf-sb"><p class="pdf-p">${esc(OBJETIVO)}</p></div></section>
       <section class="pdf-sec">${sh(3, 'Critérios de avaliação — 100 pontos')}<div class="pdf-sb" style="padding:0">
