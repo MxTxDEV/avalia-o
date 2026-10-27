@@ -123,6 +123,11 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .menu-pop hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 .menu-pop small { color: var(--muted); padding: 4px 10px 6px; font-size: 12px; line-height: 1.35; }
 
+/* ---------- Login ---------- */
+.login { max-width: 420px; margin: 40px auto; padding: 24px; display: grid; gap: 12px; }
+.login h1 { font-size: 30px; font-weight: 800; text-transform: uppercase; }
+.login p { margin: 0; color: var(--muted); }
+
 /* ---------- Offline notice ---------- */
 .notice { background: var(--warn-soft); color: var(--ink); border-bottom: 1px solid var(--line); }
 .notice .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-block: 12px; }
@@ -480,6 +485,7 @@ dialog::backdrop { background: rgba(12,11,13,.55); }
         <div class="menu-pop">
           <button type="button" data-act="backup-export"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Exportar backup (.json)</button>
           <button type="button" data-act="backup-import"><svg class="i" viewBox="0 0 24 24"><path d="M12 15V3m0 0L8 7m4-4 4 4M4 17v3h16v-3"/></svg>Importar backup</button>
+          <button type="button" data-act="logout" id="logoutBtn" hidden><svg class="i" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Sair</button>
           <hr>
           <small id="menuNote"></small>
         </div>
@@ -624,7 +630,8 @@ function setSync(state, text) {
   const el = $('#sync'); el.dataset.s = state; $('.txt', el).textContent = text;
 }
 function refreshSync() {
-  if (S.mode === 'cloud') {
+  $('#logoutBtn').hidden = S.mode !== 'api';
+  if (S.mode === 'cloud' || S.mode === 'api') {
     if (pending > 0) setSync('saving', 'Salvando…');
     else if (S.readOnly) setSync('local', 'Somente leitura');
     else setSync('cloud', 'Salvo na nuvem');
@@ -649,25 +656,53 @@ async function cloudWrite(fn) {
   } finally { pending--; refreshSync(); }
 }
 
+const SENHA_KEY = 'itasul-prontuario-senha';
+let senha = '';
+try { senha = localStorage.getItem(SENHA_KEY) || ''; } catch (e) {}
+const api = (method, qs = '', body) => fetch('/api/data' + qs, {
+  method, cache: 'no-store',
+  headers: { 'x-senha': senha, ...(body ? { 'content-type': 'application/json' } : {}) },
+  body: body ? JSON.stringify(body) : undefined,
+});
+async function apiWrite(method, col, id, body) {
+  pending++; refreshSync();
+  try {
+    let r;
+    for (let i = 0; i < 2; i++) {
+      try { r = await api(method, `?col=${col}&id=${encodeURIComponent(id)}`, body); } catch (e) { r = null; }
+      if (r && r.status < 500) break;
+      await new Promise(res => setTimeout(res, 700 + Math.random() * 600));
+    }
+    if (r && r.ok) return true;
+    if (r && r.status === 401) { toast('A senha de acesso mudou. Entre de novo.', true); logout(); return false; }
+    toast('Não foi possível salvar agora. Verifique a conexão e tente de novo.', true);
+    return false;
+  } finally { pending--; refreshSync(); }
+}
+
 const Store = {
   async saveFunc(f) {
     f.atualizadoEm = new Date().toISOString();
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('funcionarios').doc(f.id).set(f)); if (ok) S.funcs.set(f.id, f); return ok; }
+    if (S.mode === 'api') { const ok = await apiWrite('PUT', 'funcionarios', f.id, f); if (ok) S.funcs.set(f.id, f); return ok; }
     S.funcs.set(f.id, f); const ok = lsSave(); refreshSync(); return ok;
   },
   async saveAval(a) {
     a.atualizadoEm = new Date().toISOString(); a.total = totalOf(a);
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('avaliacoes').doc(a.id).set(a)); if (ok) S.avals.set(a.id, a); return ok; }
+    if (S.mode === 'api') { const ok = await apiWrite('PUT', 'avaliacoes', a.id, a); if (ok) S.avals.set(a.id, a); return ok; }
     S.avals.set(a.id, a); return lsSave();
   },
   async delAval(id) {
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('avaliacoes').doc(id).delete()); if (ok) S.avals.delete(id); return ok; }
+    if (S.mode === 'api') { const ok = await apiWrite('DELETE', 'avaliacoes', id); if (ok) S.avals.delete(id); return ok; }
     S.avals.delete(id); return lsSave();
   },
   async delFunc(id) {
     const avs = [...S.avals.values()].filter(a => a.funcionarioId === id);
     for (const a of avs) { if (!(await Store.delAval(a.id))) return false; }
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('funcionarios').doc(id).delete()); if (ok) S.funcs.delete(id); return ok; }
+    if (S.mode === 'api') { const ok = await apiWrite('DELETE', 'funcionarios', id); if (ok) S.funcs.delete(id); return ok; }
     S.funcs.delete(id); return lsSave();
   },
 };
@@ -678,7 +713,15 @@ async function boot() {
     setSync('saving', 'Conectando…');
     try { db = await window.claude.use('db'); } catch (e) { db = null; }
   }
-  if (!db) { S.mode = 'local'; lsLoad(); S.ready = true; refreshSync(); route(); return; }
+  if (!db) {
+    if (location.protocol.startsWith('http')) {
+      const st = await apiLoad();
+      if (st === 'ok') { S.mode = 'api'; S.ready = true; refreshSync(); route(); startPolling(); return; }
+      if (st === 'auth') { S.mode = 'api'; refreshSync(); renderLogin(); return; }
+      if (st === 'error') { S.mode = 'api'; refreshSync(); renderLogin('O servidor de dados ainda não está configurado. Fale com o responsável pelo sistema.'); return; }
+    }
+    S.mode = 'local'; lsLoad(); S.ready = true; refreshSync(); route(); return;
+  }
   S.mode = 'cloud'; refreshSync();
   window.claude.use('user').then(async u => { if (!u) return; try { if ((await u.can('data.write')) === false) { S.readOnly = true; refreshSync(); route(); } } catch (e) {} });
   let gotF = false, gotA = false;
@@ -690,6 +733,71 @@ async function boot() {
   db.collection('avaliacoes').onSnapshot(snap => {
     S.avals = new Map(snap.docs.map(d => [d.id, { ...d.data(), id: d.id }])); gotA = true; done();
   }, onErr);
+}
+
+/* ---- Vercel API mode ---- */
+let lastSnap = '';
+async function apiLoad() {
+  let r;
+  try { r = await api('GET'); } catch (e) { return 'none'; }
+  if (r.status === 401) return 'auth';
+  if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) return r.status === 500 ? 'error' : 'none';
+  let d; try { d = await r.json(); } catch (e) { return 'none'; }
+  if (!Array.isArray(d.funcionarios)) return 'none';
+  const snap = JSON.stringify(d);
+  if (snap !== lastSnap) {
+    lastSnap = snap;
+    S.funcs = new Map(d.funcionarios.map(f => [f.id, f]));
+    S.avals = new Map((d.avaliacoes || []).map(a => [a.id, a]));
+    return 'ok';
+  }
+  return 'same';
+}
+let pollTimer = null;
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (document.hidden || pending > 0 || current.view === 'aval') return;
+    const st = await apiLoad();
+    if (st === 'ok') onDataChange();
+    else if (st === 'auth') logout();
+  }, 30000);
+}
+function renderLogin(msg) {
+  $('.actionbar')?.remove();
+  setSync('local', 'Acesso restrito');
+  $('#view').innerHTML = `<form class="panel login" id="loginForm" novalidate>
+      <div class="eyebrow">Acesso restrito</div>
+      <h1>Entrar no prontuário</h1>
+      <p>Digite a senha de acesso do Grupo ITASUL. Ela fica salva neste navegador.</p>
+      <div class="f"><label for="lg-senha">Senha de acesso</label><input id="lg-senha" type="password" autocomplete="current-password" required></div>
+      <div class="err" id="lg-err" ${msg ? '' : 'hidden'}>${esc(msg || '')}</div>
+      <button class="btn primary" type="submit" id="lg-btn">Entrar</button>
+    </form>`;
+  $('#lg-senha').focus();
+  $('#loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = $('#lg-senha').value.trim();
+    const err = $('#lg-err');
+    if (!v) { err.textContent = 'Digite a senha.'; err.hidden = false; return; }
+    $('#lg-btn').disabled = true;
+    senha = v; lastSnap = '';
+    const st = await apiLoad();
+    $('#lg-btn').disabled = false;
+    if (st === 'ok' || st === 'same') {
+      try { localStorage.setItem(SENHA_KEY, v); } catch (er) {}
+      S.ready = true; refreshSync(); route(); startPolling(); return;
+    }
+    err.textContent = st === 'auth' ? 'Senha incorreta. Confira e tente de novo.' : 'Não foi possível conectar. Verifique a internet e tente de novo.';
+    err.hidden = false; $('#lg-senha').select();
+  });
+}
+function logout() {
+  clearInterval(pollTimer);
+  try { localStorage.removeItem(SENHA_KEY); } catch (e) {}
+  senha = ''; lastSnap = ''; S.ready = false; S.funcs = new Map(); S.avals = new Map(); dirty = false;
+  history.replaceState(null, '', location.pathname);
+  renderLogin();
 }
 
 /* Re-render on remote changes, but never clobber a form being edited. */
@@ -1348,6 +1456,7 @@ document.addEventListener('click', async (e) => {
     case 'pdf': exportPdf(structuredClone(A)); break;
     case 'pdf-row': { const a = S.avals.get(el.dataset.id); if (a) exportPdf(a); break; }
     case 'backup-export': $('#menu').open = false; exportBackup(); break;
+    case 'logout': $('#menu').open = false; logout(); break;
     case 'backup-import': $('#menu').open = false; if (S.readOnly) { toast('Você tem acesso somente leitura.', true); break; } $('#importFile').click(); break;
   }
 });

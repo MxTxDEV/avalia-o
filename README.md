@@ -17,6 +17,7 @@ Um app estático (um único `index.html`) para o programa **Funcionário do Mês
 | Onde o app está aberto | Armazenamento |
 | --- | --- |
 | Publicado como Artifact no claude.ai | **Online**: banco de dados compartilhado do artifact, visível a todos com acesso |
+| Publicado na Vercel (com `api/data.js`) | **Online**: Vercel Blob privado, protegido por senha de acesso |
 | Aberto direto (arquivo local, GitHub Pages etc.) | `localStorage` do navegador. Use *Exportar backup* para guardar uma cópia |
 
 O selo no topo da tela mostra qual armazenamento está em uso.
@@ -26,3 +27,13 @@ O selo no topo da tela mostra qual armazenamento está em uso.
 Basta abrir `index.html` no navegador, ou publicar a pasta em qualquer
 hospedagem estática (por exemplo, GitHub Pages). As bibliotecas de PDF
 (html2canvas e jsPDF) e as fontes são carregadas de CDN.
+
+## Vercel
+
+`api/data.js` guarda cada registro como um arquivo JSON privado no Vercel Blob
+(`data/funcionarios/<id>.json` e `data/avaliacoes/<id>.json`). O projeto precisa de:
+
+- um Blob store **privado** conectado ao projeto (cria a variável `BLOB_READ_WRITE_TOKEN`);
+- a variável `APP_PASSWORD`, com a senha de acesso que a equipe digita ao entrar.
+
+Para trocar a senha, altere `APP_PASSWORD` em *Settings → Environment Variables* e faça um novo deploy.
