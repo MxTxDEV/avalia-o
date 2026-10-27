@@ -61,6 +61,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg); color: var(--ink);
@@ -84,7 +85,6 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .topbar {
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
   background: var(--band); color: var(--band-ink);
-  overflow: hidden;
 }
 .topbar::before {
   content: ""; position: absolute; inset: 0 auto 0 0; width: min(46vw, 420px);
@@ -114,7 +114,7 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .menu > summary::-webkit-details-marker { display: none; }
 .menu > summary:hover { background: rgba(255,255,255,.08); }
 .menu-pop {
-  position: absolute; right: 0; top: calc(100% + 6px); min-width: 240px; padding: 6px;
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 240px; padding: 6px;
   background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
   display: grid; gap: 2px;
 }
