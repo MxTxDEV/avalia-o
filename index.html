@@ -123,6 +123,13 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .menu-pop hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 .menu-pop small { color: var(--muted); padding: 4px 10px 6px; font-size: 12px; line-height: 1.35; }
 
+/* ---------- Offline notice ---------- */
+.notice { background: var(--warn-soft); color: var(--ink); border-bottom: 1px solid var(--line); }
+.notice .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-block: 12px; }
+.notice p { margin: 0; flex: 1 1 420px; min-width: 0; font-size: 14px; }
+.notice p b { color: var(--warn); }
+.notice .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -482,6 +489,16 @@ dialog::backdrop { background: rgba(12,11,13,.55); }
   </div>
 </header>
 
+<div class="notice" id="offline" hidden>
+  <div class="wrap">
+    <p><b>Atenção: aqui os dados ficam salvos só neste navegador.</b> A versão online, compartilhada com a equipe, abre pelo link do claude.ai. <span id="offlineMove" hidden>Para levar os cadastros daqui, clique em <b>Exportar backup</b> e depois use <b>Importar backup</b> no menu ⋮ da versão online.</span></p>
+    <div class="acts">
+      <button type="button" class="btn sm" data-act="backup-export" id="offlineExport" hidden>Exportar backup</button>
+      <a class="btn sm dark" href="https://claude.ai/artifact/39MDG1KHUm3dnuqVNBsww9" target="_blank" rel="noopener">Abrir versão online</a>
+    </div>
+  </div>
+</div>
+
 <main class="wrap" id="view" aria-live="polite">
   <div class="loading">Carregando dados…</div>
 </main>
@@ -614,6 +631,8 @@ function refreshSync() {
     $('#menuNote').textContent = 'Os dados ficam salvos online e aparecem para todos que têm acesso a este app.';
   } else {
     setSync('local', 'Salvo neste navegador');
+    const has = S.funcs.size > 0;
+    $('#offline').hidden = false; $('#offlineMove').hidden = !has; $('#offlineExport').hidden = !has;
     $('#menuNote').textContent = 'Os dados estão salvos apenas neste navegador. Exporte um backup regularmente ou abra o app publicado para salvar online.';
   }
 }
@@ -634,7 +653,7 @@ const Store = {
   async saveFunc(f) {
     f.atualizadoEm = new Date().toISOString();
     if (S.mode === 'cloud') { const ok = await cloudWrite(() => db.collection('funcionarios').doc(f.id).set(f)); if (ok) S.funcs.set(f.id, f); return ok; }
-    S.funcs.set(f.id, f); return lsSave();
+    S.funcs.set(f.id, f); const ok = lsSave(); refreshSync(); return ok;
   },
   async saveAval(a) {
     a.atualizadoEm = new Date().toISOString(); a.total = totalOf(a);
