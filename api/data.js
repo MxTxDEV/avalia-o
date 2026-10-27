@@ -48,6 +48,12 @@ async function lerTudo() {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  // Health check without data: confirms the function, the password and the Blob store are configured.
+  if (req.method === 'GET' && req.query.saude !== undefined) {
+    try { await list({ prefix: 'data/', limit: 1 }); }
+    catch (e) { return res.status(500).json({ ok: false, armazenamento: false, senhaConfigurada: !!process.env.APP_PASSWORD }); }
+    return res.status(200).json({ ok: true, armazenamento: true, senhaConfigurada: !!process.env.APP_PASSWORD });
+  }
   if (!process.env.APP_PASSWORD) return res.status(500).json({ erro: 'APP_PASSWORD não configurada no projeto.' });
   if (!senhaOk(req)) return res.status(401).json({ erro: 'Senha de acesso inválida.' });
 
